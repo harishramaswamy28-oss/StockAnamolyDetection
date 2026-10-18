@@ -1,0 +1,8 @@
+psycopg[binary]
+python-dotenv
+pandas
+numpy
+scikit-learn
+alpaca-py
+fastapi
+uvicorn[standard]
