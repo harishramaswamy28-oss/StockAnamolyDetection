@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from './api/client'
 import StockOverview from './components/StockOverview'
 import PriceChart from './components/PriceChart'
@@ -10,6 +11,7 @@ import NotificationPanel from './components/NotificationPanel'
 import PreferencesPanel from './components/PreferencesPanel'
 
 const TABS = [
+  { id: 'overview', label: 'Overview' },
   { id: 'monitoring', label: 'Monitoring' },
   { id: 'watchlists', label: 'Watchlists' },
   { id: 'alerts', label: 'Price Alerts' },
@@ -17,11 +19,6 @@ const TABS = [
   { id: 'preferences', label: 'Preferences' },
 ]
 
-// Real-time monitoring uses simple polling (not websockets): every
-// REFRESH_INTERVAL_MS, the dashboard re-fetches stock summaries, the selected
-// stock's prices/anomalies, and notifications. This keeps the frontend
-// implementation simple while still reflecting new bars/anomalies/alerts
-// produced by the real-time stream processor without a manual page reload.
 const REFRESH_INTERVAL_MS = 15000
 
 function formatAutomationTime(value) {
@@ -31,12 +28,39 @@ function formatAutomationTime(value) {
 }
 
 export default function App() {
-  const [userId, setUserId] = useState(1)
+  const navigate = useNavigate()
+  const [userId, setUserId] = useState(() => {
+    const stored = localStorage.getItem('userId')
+    return stored ? parseInt(stored, 10) : 1
+  })
   const [activeTab, setActiveTab] = useState('monitoring')
+  const [showUserMenu, setShowUserMenu] = useState(false)
+
+  const userMenuRef = useRef(null)
+
+  useEffect(() => {
+    const stored = localStorage.getItem('userId')
+    if (!stored) {
+      navigate('/login', { replace: true })
+      return
+    }
+    setUserId(parseInt(stored, 10))
+  }, [navigate])
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setShowUserMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const [stocks, setStocks] = useState([])
   const [summaries, setSummaries] = useState({})
   const [selectedSymbol, setSelectedSymbol] = useState(null)
+  const [chartTab, setChartTab] = useState('price')
   const [timeframe, setTimeframe] = useState('day')
   const [prices, setPrices] = useState([])
   const [anomalies, setAnomalies] = useState([])
@@ -186,32 +210,52 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <h1>Stock Anomaly Monitor</h1>
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            className={`nav-item${activeTab === tab.id ? ' active' : ''}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-        <div style={{ marginTop: 24, padding: '0 8px' }}>
-          <label className="muted" style={{ fontSize: 12 }}>
-            User ID
-            <input
-              type="number"
-              min="1"
-              value={userId}
-              onChange={(e) => setUserId(parseInt(e.target.value, 10) || 1)}
-              style={{ width: '100%', marginTop: 4 }}
-            />
-          </label>
+      <nav className="top-tabs" role="tablist" aria-label="Main navigation">
+        <div className="nav-left">
+          <span className="app-title">Stock Anomaly Monitor</span>
         </div>
-      </aside>
+        <div className="nav-center">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={activeTab === tab.id ? 'active' : ''}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div className="nav-right" ref={userMenuRef}>
+          <div className="user-menu">
+            <button
+              className="user-avatar"
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              aria-expanded={showUserMenu}
+              aria-haspopup="true"
+              aria-label="User menu"
+            >
+              <img src="/images/logo-1.png" alt="User avatar" onError={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'block'; }} />
+              <span className="avatar-fallback" style={{display: 'none'}} />
+            </button>
+            {showUserMenu && (
+              <div className="user-dropdown" role="menu">
+                <div className="dropdown-header">
+                  <span className="dropdown-user-id">User #{userId}</span>
+                  <span className="dropdown-guest">Guest</span>
+                </div>
+                <button className="dropdown-item signout" role="menuitem" onClick={() => { localStorage.removeItem('userId'); navigate('/login', { replace: true }) }}>
+                  Sign Out
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </nav>
 
       <main className="main-content">
+
         <div className="status-bar">
           <span className={`dot${health && health.status === 'healthy' ? '' : ' bad'}`} />
           API: {health ? health.status : 'checking…'} · dashboard refresh {REFRESH_INTERVAL_MS / 1000}s
@@ -226,6 +270,42 @@ export default function App() {
         </div>
         {dataError && <p className="error-text" role="alert">{dataError}</p>}
 
+{activeTab === 'overview' && (
+          <div className="card">
+            <h2>Stock Overview</h2>
+            <div className="grid">
+              {stocks.map((stock) => {
+                const summary = summaries[stock.symbol]
+                const hasAnomalies = summary && summary.total_anomalies > 0
+                return (
+                  <button
+                    type="button"
+                    aria-pressed={selectedSymbol === stock.symbol}
+                    key={stock.security_id}
+                    className={`stock-tile${selectedSymbol === stock.symbol ? ' selected' : ''}`}
+                    onClick={() => { setSelectedSymbol(stock.symbol); setActiveTab('monitoring') }}
+                  >
+                    <div className="symbol">{stock.symbol}</div>
+                    <div className="company">{stock.name}</div>
+                    <div className="price">
+                      {summary && summary.latest_price != null ? `$${summary.latest_price.toFixed(2)}` : '—'}
+                    </div>
+                    <div className="muted" style={{ fontSize: 11 }}>
+                      {summary && summary.latest_timestamp
+                        ? new Date(summary.latest_timestamp).toLocaleString()
+                        : 'no data yet'}
+                    </div>
+                    {hasAnomalies && (
+                      <span className="anomaly-badge">{summary.total_anomalies} anomalies</span>
+                    )}
+                  </button>
+                )
+              })}
+              {stocks.length === 0 && <p className="muted">No securities found. Run metadata ingestion first.</p>}
+            </div>
+          </div>
+        )}
+
         {activeTab === 'monitoring' && (
           <>
             <StockOverview
@@ -236,36 +316,61 @@ export default function App() {
             />
 
             {selectedSymbol && (
-              <div className="card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-                  <h2>{selectedSymbol} — Price &amp; Volume</h2>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-                      <option value="day">Daily (historical)</option>
-                      <option value="minute">Minute (intraday)</option>
+              <div className="card monitoring-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+                  <h2 style={{ margin: 0 }}>{selectedSymbol} — {timeframe === 'day' ? 'Daily' : 'Intraday'}</h2>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)} style={{ padding: '6px 10px', fontSize: 13 }}>
+                      <option value="day">Daily</option>
+                      <option value="minute">Minute</option>
                     </select>
-                    <button className="ghost" onClick={runHistoricalAnalysis}>Run analysis now</button>
-                    <button className="ghost" onClick={runPipelineDemo}>Reprocess stored bar</button>
-                    <button className="ghost" onClick={runAlertCheck}>Check alerts now</button>
+                    <button className="ghost" onClick={runHistoricalAnalysis} style={{ padding: '6px 10px', fontSize: 12 }}>Run analysis</button>
+                    <button className="ghost" onClick={runPipelineDemo} style={{ padding: '6px 10px', fontSize: 12 }}>Reprocess bar</button>
+                    <button className="ghost" onClick={runAlertCheck} style={{ padding: '6px 10px', fontSize: 12 }}>Check alerts</button>
                   </div>
                 </div>
-                <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                  Automatic monitoring processes each incoming minute bar and checks price alerts every minute.
-                  Analysis actions are optional manual reruns. Reprocess stored bar re-evaluates saved data; it does not fetch a fresh price.
-                </p>
-                {actionMessage && <p className="muted" style={{ fontSize: 12 }}>{actionMessage}</p>}
-                {thresholds && <p className="muted" style={{ fontSize: 12 }}>
-                  Adaptive limits (rolling Q1 − 1.5×IQR / Q3 + 1.5×IQR): {thresholds.ready
-                    ? `${timeframe} return ${(thresholds.price_return_lower * 100).toFixed(2)}% to ${(thresholds.price_return_upper * 100).toFixed(2)}%; volume ratio ${thresholds.volume_ratio_lower.toFixed(2)}× to ${thresholds.volume_ratio_upper.toFixed(2)}× (${thresholds.samples} prior bars)`
+
+                <div className="chart-tabs" role="tablist" aria-label="Chart selection">
+                  <button
+                    role="tab"
+                    aria-selected={chartTab === 'price'}
+                    className={chartTab === 'price' ? 'active' : ''}
+                    onClick={() => setChartTab('price')}
+                  >
+                    Price
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={chartTab === 'volume'}
+                    className={chartTab === 'volume' ? 'active' : ''}
+                    onClick={() => setChartTab('volume')}
+                  >
+                    Volume
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={chartTab === 'anomalies'}
+                    className={chartTab === 'anomalies' ? 'active' : ''}
+                    onClick={() => setChartTab('anomalies')}
+                  >
+                    Anomalies
+                  </button>
+                </div>
+
+                {actionMessage && <p className="muted" style={{ fontSize: 12, margin: '12px 0 0' }}>{actionMessage}</p>}
+                {thresholds && <p className="muted" style={{ fontSize: 11, margin: '8px 0 0' }}>
+                  Limits: {thresholds.ready
+                    ? `Return ${(thresholds.price_return_lower * 100).toFixed(2)}%–${(thresholds.price_return_upper * 100).toFixed(2)}% | Vol ${thresholds.volume_ratio_lower.toFixed(2)}×–${thresholds.volume_ratio_upper.toFixed(2)}× (${thresholds.samples} bars)`
                     : thresholds.message}
                 </p>}
-                <PriceChart symbol={selectedSymbol} prices={prices} anomalies={anomalies} />
-                <h3 style={{ marginTop: 24 }}>Volume</h3>
-                <VolumeChart symbol={selectedSymbol} prices={prices} />
+
+                <div className="chart-panel" style={{ marginTop: 16, height: 420, overflow: 'auto' }}>
+                  {chartTab === 'price' && <PriceChart symbol={selectedSymbol} prices={prices} anomalies={anomalies} />}
+                  {chartTab === 'volume' && <VolumeChart symbol={selectedSymbol} prices={prices} />}
+                  {chartTab === 'anomalies' && <AnomalyList anomalies={anomalies} compact />}
+                </div>
               </div>
             )}
-
-            {selectedSymbol && <AnomalyList anomalies={anomalies} />}
           </>
         )}
 
