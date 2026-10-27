@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from './api/client'
 import StockOverview from './components/StockOverview'
@@ -36,8 +36,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('monitoring')
   const [showUserMenu, setShowUserMenu] = useState(false)
 
-  const userMenuRef = useRef(null)
-
   useEffect(() => {
     const stored = localStorage.getItem('userId')
     if (!stored) {
@@ -46,16 +44,6 @@ export default function App() {
     }
     setUserId(parseInt(stored, 10))
   }, [navigate])
-
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
-        setShowUserMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
 
   const [stocks, setStocks] = useState([])
   const [summaries, setSummaries] = useState({})
@@ -227,30 +215,28 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className="nav-right" ref={userMenuRef}>
-          <div className="user-menu">
-            <button
-              className="user-avatar"
-              onClick={() => setShowUserMenu(!showUserMenu)}
-              aria-expanded={showUserMenu}
-              aria-haspopup="true"
-              aria-label="User menu"
-            >
-              <img src="/images/logo-1.png" alt="User avatar" onError={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'block'; }} />
-              <span className="avatar-fallback" style={{display: 'none'}} />
-            </button>
-            {showUserMenu && (
-              <div className="user-dropdown" role="menu">
-                <div className="dropdown-header">
-                  <span className="dropdown-user-id">User #{userId}</span>
-                  <span className="dropdown-guest">Guest</span>
-                </div>
-                <button className="dropdown-item signout" role="menuitem" onClick={() => { localStorage.removeItem('userId'); navigate('/login', { replace: true }) }}>
-                  Sign Out
-                </button>
+        <div className="nav-right">
+          <button
+            className="about-button"
+            onClick={() => setShowUserMenu(!showUserMenu)}
+          >
+            About me?
+          </button>
+          {showUserMenu && (
+            <div className="about-dropdown" role="menu">
+              <div className="about-dropdown-header">
+                <span className="about-user-id">User #{userId}</span>
+                <span className="about-guest">Guest</span>
               </div>
-            )}
-          </div>
+              <hr className="about-divider" />
+              <button className="about-item about-styles" role="menuitem" onClick={() => { setShowUserMenu(false); navigate('/styles') }}>
+                Styles
+              </button>
+              <button className="about-item about-signout" role="menuitem" onClick={() => { localStorage.removeItem('userId'); navigate('/login', { replace: true }) }}>
+                Sign Out
+              </button>
+            </div>
+          )}
         </div>
       </nav>
 
@@ -308,13 +294,6 @@ export default function App() {
 
         {activeTab === 'monitoring' && (
           <>
-            <StockOverview
-              stocks={stocks}
-              summaries={summaries}
-              selectedSymbol={selectedSymbol}
-              onSelect={setSelectedSymbol}
-            />
-
             {selectedSymbol && (
               <div className="card monitoring-card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
