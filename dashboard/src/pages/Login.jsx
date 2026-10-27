@@ -18,7 +18,7 @@ export default function Login() {
     try {
       if (mode === 'register') await api.registerAccount(name, email, password)
       else await api.login(email, password)
-      navigate('/', { replace: true })
+      navigate('/overview', { replace: true })
     } catch (err) {
       setError(err.message)
     } finally {
@@ -37,8 +37,8 @@ export default function Login() {
             <div className="mural-subtitle">Real-time market intelligence at your fingertips</div>
             <div className="mural-stats">
               <div className="mural-stat">
-                <span className="mural-stat-value">4</span>
-                <span className="mural-stat-label">Markets</span>
+                <span className="mural-stat-value">Live</span>
+                <span className="mural-stat-label">market</span>
               </div>
               <div className="mural-stat">
                 <span className="mural-stat-value">24/7</span>

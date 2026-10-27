@@ -1,10 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { api } from './api/client'
-import StockOverview from './components/StockOverview'
-import PriceChart from './components/PriceChart'
-import VolumeChart from './components/VolumeChart'
-import AnomalyList from './components/AnomalyList'
 import WatchlistPanel from './components/WatchlistPanel'
 import AlertPanel from './components/AlertPanel'
 import NotificationPanel from './components/NotificationPanel'
@@ -13,7 +9,6 @@ import PersonalDataQuery from './components/PersonalDataQuery'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
-  { id: 'monitoring', label: 'Monitoring' },
   { id: 'watchlists', label: 'Watchlists' },
   { id: 'alerts', label: 'Price Alerts' },
   { id: 'notifications', label: 'Notifications' },
@@ -31,11 +26,21 @@ function formatAutomationTime(value) {
 
 export default function App() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [account, setAccount] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const userId = account?.user_id
-  const [activeTab, setActiveTab] = useState('monitoring')
+  const [activeTab, setActiveTab] = useState('overview')
   const [showUserMenu, setShowUserMenu] = useState(false)
+
+  // If we're on a monitoring route, redirect handling is in MonitoringPage
+  useEffect(() => {
+    if (location.pathname.startsWith('/monitoring/')) {
+      // Don't render App tabs when on monitoring page
+      return
+    }
+    setActiveTab('overview')
+  }, [location.pathname])
 
   useEffect(() => {
     let active = true
@@ -59,27 +64,18 @@ export default function App() {
 
   const [stocks, setStocks] = useState([])
   const [summaries, setSummaries] = useState({})
-  const [selectedSymbol, setSelectedSymbol] = useState(null)
-  const [chartTab, setChartTab] = useState('price')
-  const [timeframe, setTimeframe] = useState('day')
-  const [prices, setPrices] = useState([])
-  const [anomalies, setAnomalies] = useState([])
-  const [thresholds, setThresholds] = useState(null)
 
   const [watchlists, setWatchlists] = useState([])
   const [alerts, setAlerts] = useState([])
   const [notifications, setNotifications] = useState([])
 
   const [health, setHealth] = useState(null)
-  const [actionMessage, setActionMessage] = useState(null)
   const [dataError, setDataError] = useState(null)
 
   const loadStocks = useCallback(async () => {
     try {
       const list = await api.getStocks()
       setStocks(list)
-      if (list.length === 0) setSelectedSymbol(null)
-      else if (!list.some((stock) => stock.symbol === selectedSymbol)) setSelectedSymbol(list[0].symbol)
       const summaryEntries = await Promise.all(
         list.map(async (s) => {
           try {
@@ -94,31 +90,9 @@ export default function App() {
     } catch (err) {
       setStocks([])
       setSummaries({})
-      setSelectedSymbol(null)
       setDataError(`Could not load stocks: ${err.message}`)
     }
-  }, [selectedSymbol])
-
-  const loadSelectedStockDetail = useCallback(async () => {
-    if (!selectedSymbol) return
-    try {
-      const [p, a] = await Promise.all([
-        api.getStockPrices(selectedSymbol, timeframe, 300),
-        api.getStockAnomalies(selectedSymbol, 100, timeframe),
-      ])
-      setPrices(p)
-      setAnomalies(a)
-      setDataError(null)
-      // Threshold context was added after the core chart API. Older running
-      // API servers should not hide otherwise valid price and anomaly data.
-      api.getThresholds(selectedSymbol, timeframe).then(setThresholds).catch(() => setThresholds(null))
-    } catch (err) {
-      setPrices([])
-      setAnomalies([])
-      setThresholds(null)
-      setDataError(`Could not load price history: ${err.message}`)
-    }
-  }, [selectedSymbol, timeframe])
+  }, [])
 
   const loadUserData = useCallback(async () => {
     if (!userId) return
@@ -143,7 +117,7 @@ export default function App() {
   const signOut = async () => {
     try { await api.logout() } catch { /* An expired session is already signed out. */ }
     setAccount(null)
-    navigate('/login', { replace: true })
+    navigate('/', { replace: true })
   }
 
   const loadHealth = useCallback(async () => {
@@ -155,7 +129,6 @@ export default function App() {
   }, [])
 
   useEffect(() => { loadStocks() }, [loadStocks])
-  useEffect(() => { loadSelectedStockDetail() }, [loadSelectedStockDetail])
   useEffect(() => { loadUserData() }, [loadUserData])
   useEffect(() => { loadHealth() }, [loadHealth])
 
@@ -163,60 +136,14 @@ export default function App() {
   useEffect(() => {
     const interval = setInterval(() => {
       loadStocks()
-      loadSelectedStockDetail()
       loadUserData()
       loadHealth()
     }, REFRESH_INTERVAL_MS)
     return () => clearInterval(interval)
-  }, [loadStocks, loadSelectedStockDetail, loadUserData, loadHealth])
+  }, [loadStocks, loadUserData, loadHealth])
 
   if (!authReady) return <main className="auth-loading">Checking your session…</main>
   if (!account) return null
-
-  const runPipelineDemo = async () => {
-    if (!selectedSymbol) return
-    setActionMessage('Running pipeline…')
-    try {
-      const result = await api.processPipeline(selectedSymbol, timeframe === 'minute' ? 'minute' : 'day')
-      setActionMessage(
-        result.error
-          ? `Error: ${result.error}`
-          : `Reprocessed stored ${result.symbol} bar from ${new Date(result.timestamp).toLocaleString()}: ` +
-            `${result.anomalies_detected} anomaly(ies), ` +
-            `${result.alert_notifications_created} alert notification(s).`
-      )
-      loadSelectedStockDetail()
-      loadUserData()
-    } catch (err) {
-      setActionMessage(`Error: ${err.message}`)
-    }
-  }
-
-  const runHistoricalAnalysis = async () => {
-    if (!selectedSymbol) return
-    setActionMessage('Running historical analysis…')
-    try {
-      const result = await api.runAnalysis(selectedSymbol)
-      setActionMessage(
-        result.error ? `Error: ${result.error}` : `Historical analysis run #${result.analysis_id} completed.`
-      )
-      loadSelectedStockDetail()
-      loadStocks()
-    } catch (err) {
-      setActionMessage(`Error: ${err.message}`)
-    }
-  }
-
-  const runAlertCheck = async () => {
-    setActionMessage('Checking alerts…')
-    try {
-      const result = await api.checkAlerts()
-      setActionMessage(`Checked ${result.alerts_checked} alert(s); ${result.notifications_created} new notification(s).`)
-      loadUserData()
-    } catch (err) {
-      setActionMessage(`Error: ${err.message}`)
-    }
-  }
 
   return (
     <div className="app-shell">
@@ -245,12 +172,12 @@ export default function App() {
             About me?
           </button>
           {showUserMenu && (
-            <div className="about-dropdown" role="menu">
-              <div className="about-dropdown-header">
-                <span className="about-user-id">{account.name}</span>
-                <span className="about-guest">{account.email}</span>
+            <div className="user-dropdown" role="menu">
+              <div className="dropdown-header">
+                <span className="dropdown-user-id">{account.name}</span>
+                <span className="dropdown-guest">Guest</span>
               </div>
-              <hr className="about-divider" />
+              <hr className="dropdown-divider" />
               <button className="about-item about-styles" role="menuitem" onClick={() => { setShowUserMenu(false); navigate('/styles') }}>
                 Styles
               </button>
@@ -278,7 +205,7 @@ export default function App() {
         </div>
         {dataError && <p className="error-text" role="alert">{dataError}</p>}
 
-{activeTab === 'overview' && (
+        {activeTab === 'overview' && (
           <div className="card">
             <h2>Stock Overview</h2>
             <div className="grid">
@@ -288,10 +215,10 @@ export default function App() {
                 return (
                   <button
                     type="button"
-                    aria-pressed={selectedSymbol === stock.symbol}
+                    aria-pressed={false}
                     key={stock.security_id}
-                    className={`stock-tile${selectedSymbol === stock.symbol ? ' selected' : ''}`}
-                    onClick={() => { setSelectedSymbol(stock.symbol); setActiveTab('monitoring') }}
+                    className="stock-tile"
+                    onClick={() => navigate(`/monitoring/${stock.symbol}`)}
                   >
                     <div className="symbol">{stock.symbol}</div>
                     <div className="company">{stock.name}</div>
@@ -314,67 +241,6 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'monitoring' && (
-          <>
-            {selectedSymbol && (
-              <div className="card monitoring-card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
-                  <h2 style={{ margin: 0 }}>{selectedSymbol} — {timeframe === 'day' ? 'Daily' : 'Intraday'}</h2>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)} style={{ padding: '6px 10px', fontSize: 13 }}>
-                      <option value="day">Daily</option>
-                      <option value="minute">Minute</option>
-                    </select>
-                    <button className="ghost" onClick={runHistoricalAnalysis} style={{ padding: '6px 10px', fontSize: 12 }}>Run analysis</button>
-                    <button className="ghost" onClick={runPipelineDemo} style={{ padding: '6px 10px', fontSize: 12 }}>Reprocess bar</button>
-                    <button className="ghost" onClick={runAlertCheck} style={{ padding: '6px 10px', fontSize: 12 }}>Check alerts</button>
-                  </div>
-                </div>
-
-                <div className="chart-tabs" role="tablist" aria-label="Chart selection">
-                  <button
-                    role="tab"
-                    aria-selected={chartTab === 'price'}
-                    className={chartTab === 'price' ? 'active' : ''}
-                    onClick={() => setChartTab('price')}
-                  >
-                    Price
-                  </button>
-                  <button
-                    role="tab"
-                    aria-selected={chartTab === 'volume'}
-                    className={chartTab === 'volume' ? 'active' : ''}
-                    onClick={() => setChartTab('volume')}
-                  >
-                    Volume
-                  </button>
-                  <button
-                    role="tab"
-                    aria-selected={chartTab === 'anomalies'}
-                    className={chartTab === 'anomalies' ? 'active' : ''}
-                    onClick={() => setChartTab('anomalies')}
-                  >
-                    Anomalies
-                  </button>
-                </div>
-
-                {actionMessage && <p className="muted" style={{ fontSize: 12, margin: '12px 0 0' }}>{actionMessage}</p>}
-                {thresholds && <p className="muted" style={{ fontSize: 11, margin: '8px 0 0' }}>
-                  Limits: {thresholds.ready
-                    ? `Return ${(thresholds.price_return_lower * 100).toFixed(2)}%–${(thresholds.price_return_upper * 100).toFixed(2)}% | Vol ${thresholds.volume_ratio_lower.toFixed(2)}×–${thresholds.volume_ratio_upper.toFixed(2)}× (${thresholds.samples} bars)`
-                    : thresholds.message}
-                </p>}
-
-                <div className="chart-panel" style={{ marginTop: 16, height: 420, overflow: 'auto' }}>
-                  {chartTab === 'price' && <PriceChart symbol={selectedSymbol} prices={prices} anomalies={anomalies} />}
-                  {chartTab === 'volume' && <VolumeChart symbol={selectedSymbol} prices={prices} />}
-                  {chartTab === 'anomalies' && <AnomalyList anomalies={anomalies} compact />}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
         {activeTab === 'watchlists' && (
           <WatchlistPanel
             userId={userId}
@@ -383,7 +249,7 @@ export default function App() {
             summaries={summaries}
             alerts={alerts}
             onChanged={loadUserData}
-            onOpenStock={(symbol) => { setSelectedSymbol(symbol); setActiveTab('monitoring') }}
+            onOpenStock={(symbol) => navigate(`/monitoring/${symbol}`)}
           />
         )}
 
