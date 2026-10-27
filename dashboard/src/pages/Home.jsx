@@ -37,9 +37,6 @@ export default function Home() {
           <button className="btn-primary" onClick={() => navigate('/login')}>
             Get started
           </button>
-          <button className="btn-secondary" onClick={() => navigate('/login')}>
-            View docs
-          </button>
         </div>
         <div className="hero-metrics">
           <div className="metric">
