@@ -9,6 +9,7 @@ import WatchlistPanel from './components/WatchlistPanel'
 import AlertPanel from './components/AlertPanel'
 import NotificationPanel from './components/NotificationPanel'
 import PreferencesPanel from './components/PreferencesPanel'
+import PersonalDataQuery from './components/PersonalDataQuery'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -17,6 +18,7 @@ const TABS = [
   { id: 'alerts', label: 'Price Alerts' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'preferences', label: 'Preferences' },
+  { id: 'database', label: 'My Data Queries' },
 ]
 
 const REFRESH_INTERVAL_MS = 15000
@@ -29,20 +31,30 @@ function formatAutomationTime(value) {
 
 export default function App() {
   const navigate = useNavigate()
-  const [userId, setUserId] = useState(() => {
-    const stored = localStorage.getItem('userId')
-    return stored ? parseInt(stored, 10) : 1
-  })
+  const [account, setAccount] = useState(null)
+  const [authReady, setAuthReady] = useState(false)
+  const userId = account?.user_id
   const [activeTab, setActiveTab] = useState('monitoring')
   const [showUserMenu, setShowUserMenu] = useState(false)
 
   useEffect(() => {
-    const stored = localStorage.getItem('userId')
-    if (!stored) {
+    let active = true
+    api.getAccount().then((current) => {
+      if (active) setAccount(current)
+    }).catch(() => {
+      if (active) navigate('/login', { replace: true })
+    }).finally(() => {
+      if (active) setAuthReady(true)
+    })
+    const requireSignIn = () => {
+      setAccount(null)
       navigate('/login', { replace: true })
-      return
     }
-    setUserId(parseInt(stored, 10))
+    window.addEventListener('auth-required', requireSignIn)
+    return () => {
+      active = false
+      window.removeEventListener('auth-required', requireSignIn)
+    }
   }, [navigate])
 
   const [stocks, setStocks] = useState([])
@@ -109,6 +121,7 @@ export default function App() {
   }, [selectedSymbol, timeframe])
 
   const loadUserData = useCallback(async () => {
+    if (!userId) return
     try {
       const [w, a, n] = await Promise.all([
         api.getWatchlists(userId),
@@ -126,6 +139,12 @@ export default function App() {
       setDataError(`Could not load data for user ${userId}: ${err.message}`)
     }
   }, [userId])
+
+  const signOut = async () => {
+    try { await api.logout() } catch { /* An expired session is already signed out. */ }
+    setAccount(null)
+    navigate('/login', { replace: true })
+  }
 
   const loadHealth = useCallback(async () => {
     try {
@@ -150,6 +169,9 @@ export default function App() {
     }, REFRESH_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [loadStocks, loadSelectedStockDetail, loadUserData, loadHealth])
+
+  if (!authReady) return <main className="auth-loading">Checking your session…</main>
+  if (!account) return null
 
   const runPipelineDemo = async () => {
     if (!selectedSymbol) return
@@ -225,14 +247,14 @@ export default function App() {
           {showUserMenu && (
             <div className="about-dropdown" role="menu">
               <div className="about-dropdown-header">
-                <span className="about-user-id">User #{userId}</span>
-                <span className="about-guest">Guest</span>
+                <span className="about-user-id">{account.name}</span>
+                <span className="about-guest">{account.email}</span>
               </div>
               <hr className="about-divider" />
               <button className="about-item about-styles" role="menuitem" onClick={() => { setShowUserMenu(false); navigate('/styles') }}>
                 Styles
               </button>
-              <button className="about-item about-signout" role="menuitem" onClick={() => { localStorage.removeItem('userId'); navigate('/login', { replace: true }) }}>
+              <button className="about-item about-signout" role="menuitem" onClick={signOut}>
                 Sign Out
               </button>
             </div>
@@ -374,6 +396,16 @@ export default function App() {
         )}
 
         {activeTab === 'preferences' && <PreferencesPanel userId={userId} />}
+        {activeTab === 'database' && (
+          <PersonalDataQuery
+            userId={userId}
+            watchlists={watchlists}
+            alerts={alerts}
+            notifications={notifications}
+            onChanged={loadUserData}
+            onAccountUpdated={async () => setAccount(await api.getAccount())}
+          />
+        )}
       </main>
     </div>
   )

@@ -3,9 +3,13 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 async function request(path, options = {}) {
   const response = await fetch(`${BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     ...options,
   })
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/auth/')) {
+      window.dispatchEvent(new Event('auth-required'))
+    }
     const body = await response.text()
     let message = body
     try {
@@ -27,6 +31,19 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  getAccount: () => request('/auth/me'),
+  registerAccount: (name, email, password) => request('/auth/register', {
+    method: 'POST', body: JSON.stringify({ name, email, password }),
+  }),
+  login: (email, password) => request('/auth/login', {
+    method: 'POST', body: JSON.stringify({ email, password }),
+  }),
+  logout: () => request('/auth/logout', { method: 'POST' }),
+  getPersonalQuerySchema: () => request('/database/query/schema'),
+  runPersonalQuery: (query) => request('/database/query/run', {
+    method: 'POST', body: JSON.stringify(query),
+  }),
+
   // Stocks
   getStocks: () => request('/stocks'),
   getStockPrices: (symbol, timeframe = 'day', limit = 500) =>
@@ -80,4 +97,5 @@ export const api = {
     request(`/pipeline/process/${symbol}?timeframe=${timeframe}`, { method: 'POST' }),
 
   getHealth: () => request('/health'),
+
 }

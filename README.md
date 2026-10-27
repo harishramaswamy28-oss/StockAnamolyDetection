@@ -378,6 +378,10 @@ AUTO_ALERT_CHECK_SECONDS=60
 AUTO_DATA_REFRESH_SECONDS=21600
 AUTO_DAILY_REFRESH_DAYS=5
 AUTO_MINUTE_REFRESH_DAYS=1
+
+# Dashboard sign-in cookies and permitted browser origins.
+AUTH_COOKIE_SECURE=false
+DASHBOARD_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 ```
 
 For the dashboard, copy `dashboard/.env.example` to `dashboard/.env` if the
@@ -403,6 +407,8 @@ API is not running at the default `http://127.0.0.1:8000`.
 5. **Optional:** run [`sql/03_optional_demo_data.sql`](sql/03_optional_demo_data.sql)
    to create a demo user/watchlist for API/dashboard testing. Not required
    for ingestion or anomaly detection.
+6. Apply [`sql/05_user_authentication.sql`](sql/05_user_authentication.sql)
+   after the base schema to add password sign-in and server-side sessions.
 
 ## 14. Historical Ingestion
 
@@ -465,6 +471,20 @@ Open the printed local URL (default `http://localhost:5173`). The API must
 be running and reachable at `VITE_API_BASE_URL` (default
 `http://127.0.0.1:8000`).
 
+### Sign-in and My Data Queries
+
+The dashboard supports account registration and password sign-in. Existing
+accounts created before authentication was added have no password hash and
+need credentials provisioned before they can sign in. The **My Data Queries**
+tab offers a guided builder for `app_user`, `watchlist`, `watchlist_security`,
+`alert`, `notification`, and `user_preference`. It displays a read-only SQL
+preview but accepts no SQL text. Values are bound separately, and the API
+enforces ownership from the session, an allowlist of columns/actions, a
+100-row limit, and a three-second query timeout. Notification messages,
+session tokens, and password hashes are not exposed by the builder.
+For HTTPS deployments, set `AUTH_COOKIE_SECURE=true` and configure
+`DASHBOARD_ORIGINS` to the exact frontend origin(s).
+
 ## 18. Running Tests
 
 ```powershell
@@ -495,9 +515,9 @@ See [`TEST_GUIDE.md`](TEST_GUIDE.md) for a description of every test file.
   system.
 - **Sector data is a manual mapping**, not sourced from Alpaca (Alpaca's
   asset endpoint does not provide sector classification).
-- **No authentication/authorization layer.** `user_id` is passed directly in
-  API paths; this is appropriate for a monitoring prototype but not for a
-  multi-tenant production deployment without adding an auth layer.
+- **Existing accounts need credential provisioning.** Accounts from before
+  password sign-in was added have a NULL password hash; register a new account
+  or provision credentials for existing accounts before sign-in.
 - **Recommended next analysis improvement: time-of-day volume normalization.**
   Minute volume has strong intraday patterns, so compare each minute with the
   same time-of-day across prior sessions before treating adaptive rolling

@@ -75,6 +75,13 @@ deduplication hardening migration:
 psql -h $env:DB_HOST -U $env:DB_USER -d $env:DB_NAME -f sql\04_notification_deduplication.sql
 ```
 
+Apply the authentication migration after the base schema on fresh databases
+and on existing installations:
+
+```powershell
+psql -h $env:DB_HOST -U $env:DB_USER -d $env:DB_NAME -f sql\05_user_authentication.sql
+```
+
 ## 5. Load metadata (companies, sectors, exchanges, securities)
 
 ```powershell
@@ -141,17 +148,10 @@ Open the printed URL (default `http://localhost:5173`).
 
 ## 12. Create a user, watchlist, and alert (if you did not run the optional demo data script)
 
-Use the dashboard UI, or:
-
-```powershell
-curl -X POST http://127.0.0.1:8000/users/1/watchlists -H "Content-Type: application/json" -d "{\"name\":\"Tech\"}"
-curl -X POST http://127.0.0.1:8000/users/1/watchlists/1/stocks -H "Content-Type: application/json" -d "{\"symbol\":\"AAPL\"}"
-curl -X POST http://127.0.0.1:8000/users/1/alerts -H "Content-Type: application/json" -d "{\"symbol\":\"AAPL\",\"condition\":\"above\",\"target_price\":100}"
-```
-
-(Note: `app_user` rows are not created by the API; insert one directly via
-SQL or via `sql/03_optional_demo_data.sql` before creating watchlists/alerts
-for that user.)
+Register or sign in through the dashboard. User-specific API operations require
+the authenticated session; do not call them by supplying another account's
+`user_id`. Older accounts created before password sign-in was added require an
+administrator to provision credentials before those users can sign in.
 
 ## Shutdown order
 

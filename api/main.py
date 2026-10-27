@@ -1,10 +1,24 @@
 from contextlib import asynccontextmanager
+import os
+import re
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+import psycopg
 
+from api.auth import (
+    SESSION_COOKIE,
+    SESSION_DAYS,
+    get_current_user,
+    hash_password,
+    issue_session,
+    require_matching_user,
+    revoke_session,
+    verify_password,
+)
+from api.user_query_builder import router as user_query_builder_router
 from alerts.alert_checker import check_all_active_alerts
 from analysis.pipeline import process_latest_stored_bar, run_historical_analysis
 from analysis.thresholds import get_threshold_snapshot
@@ -30,17 +44,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The dashboard (Vite dev server / static build) runs on a different origin.
-# Credentials are never required for these read/demo endpoints, so a permissive
-# CORS policy is acceptable for this project; tighten allow_origins for
-# production deployments.
+# The dashboard sends HTTP-only session cookies from a separate browser origin.
+# Keep credentialed CORS restricted to explicitly configured dashboard origins.
+allowed_dashboard_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "DASHBOARD_ORIGINS",
+        "http://127.0.0.1:5173,http://localhost:5173",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=allowed_dashboard_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(user_query_builder_router)
 
 
 class WatchlistCreate(BaseModel):
@@ -61,6 +82,81 @@ class UserPreferenceUpdate(BaseModel):
     price_alerts: bool
     anomaly_alerts: bool
     notification_mode: str
+
+
+class RegisterRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=12, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
+
+
+def set_session_cookie(response: Response, token: str):
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=SESSION_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=os.getenv("AUTH_COOKIE_SECURE", "false").lower() in {"1", "true", "yes"},
+        samesite="lax",
+        path="/",
+    )
+
+
+@app.post("/auth/register")
+def register_account(data: RegisterRequest, response: Response):
+    name = data.name.strip()
+    email = data.email.strip().lower()
+    if not name or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(status_code=422, detail="Enter a name and valid email address.")
+    if len(name) > 200:
+        raise HTTPException(status_code=422, detail="Name must be 200 characters or fewer.")
+    try:
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO app_user(name,email,password_hash) VALUES (%s,%s,%s) RETURNING user_id,name,email",
+                    (name, email, hash_password(data.password)),
+                )
+                user = cursor.fetchone()
+                cursor.execute(
+                    "INSERT INTO user_preference(user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+                    (user[0],),
+                )
+            connection.commit()
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(status_code=409, detail="An account with that email already exists.") from None
+    set_session_cookie(response, issue_session(user[0]))
+    return {"user_id": user[0], "name": user[1], "email": user[2]}
+
+
+@app.post("/auth/login")
+def login_account(data: LoginRequest, response: Response):
+    email = data.email.strip().lower()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT user_id,name,email,password_hash FROM app_user WHERE lower(email)=%s", (email,))
+            user = cursor.fetchone()
+    if user is None or not verify_password(data.password, user[3]):
+        raise HTTPException(status_code=401, detail="Email or password is incorrect.")
+    set_session_cookie(response, issue_session(user[0]))
+    return {"user_id": user[0], "name": user[1], "email": user[2]}
+
+
+@app.post("/auth/logout")
+def logout_account(request: Request, response: Response):
+    revoke_session(request.cookies.get(SESSION_COOKIE))
+    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax")
+    return {"message": "Signed out."}
+
+
+@app.get("/auth/me")
+def get_account(current_user=Depends(get_current_user)):
+    return current_user
 
 
 def api_error(message: str, status_code: int = 400):
@@ -218,7 +314,7 @@ def get_stock_thresholds(symbol: str, timeframe: str = "day"):
 
 
 @app.get("/users/{user_id}/watchlists")
-def get_user_watchlists(user_id: int):
+def get_user_watchlists(user_id: int, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -241,7 +337,7 @@ def get_user_watchlists(user_id: int):
 
 
 @app.post("/users/{user_id}/watchlists")
-def create_watchlist(user_id: int, watchlist: WatchlistCreate):
+def create_watchlist(user_id: int, watchlist: WatchlistCreate, current_user=Depends(require_matching_user)):
     name = watchlist.name.strip()
     if not name:
         return api_error("name must not be blank", 422)
@@ -261,7 +357,7 @@ def create_watchlist(user_id: int, watchlist: WatchlistCreate):
 
 
 @app.post("/users/{user_id}/watchlists/{watchlist_no}/stocks")
-def add_stock_to_watchlist(user_id: int, watchlist_no: int, stock: WatchlistStockAdd):
+def add_stock_to_watchlist(user_id: int, watchlist_no: int, stock: WatchlistStockAdd, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1 FROM watchlist WHERE user_id = %s AND watchlist_no = %s", (user_id, watchlist_no))
@@ -285,7 +381,7 @@ def add_stock_to_watchlist(user_id: int, watchlist_no: int, stock: WatchlistStoc
 
 
 @app.delete("/users/{user_id}/watchlists/{watchlist_no}/stocks/{symbol}")
-def remove_stock_from_watchlist(user_id: int, watchlist_no: int, symbol: str):
+def remove_stock_from_watchlist(user_id: int, watchlist_no: int, symbol: str, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT security_id FROM security WHERE symbol = %s", (symbol.upper(),))
@@ -307,7 +403,7 @@ def remove_stock_from_watchlist(user_id: int, watchlist_no: int, symbol: str):
 
 
 @app.delete("/users/{user_id}/watchlists/{watchlist_no}")
-def delete_watchlist(user_id: int, watchlist_no: int):
+def delete_watchlist(user_id: int, watchlist_no: int, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute("DELETE FROM watchlist WHERE user_id = %s AND watchlist_no = %s RETURNING name", (user_id, watchlist_no))
@@ -319,7 +415,7 @@ def delete_watchlist(user_id: int, watchlist_no: int):
 
 
 @app.get("/users/{user_id}/alerts")
-def get_user_alerts(user_id: int):
+def get_user_alerts(user_id: int, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -339,7 +435,7 @@ def get_user_alerts(user_id: int):
 
 
 @app.post("/users/{user_id}/alerts")
-def create_alert(user_id: int, alert: AlertCreate):
+def create_alert(user_id: int, alert: AlertCreate, current_user=Depends(require_matching_user)):
     if alert.condition not in {"above", "below"}:
         return api_error("condition must be 'above' or 'below'", 422)
     with get_connection() as connection:
@@ -366,7 +462,7 @@ def create_alert(user_id: int, alert: AlertCreate):
 
 
 @app.delete("/users/{user_id}/alerts/{alert_no}")
-def delete_alert(user_id: int, alert_no: int):
+def delete_alert(user_id: int, alert_no: int, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute("DELETE FROM alert WHERE user_id = %s AND alert_no = %s RETURNING alert_no", (user_id, alert_no))
@@ -377,7 +473,7 @@ def delete_alert(user_id: int, alert_no: int):
 
 
 @app.get("/users/{user_id}/alerts/{alert_no}/evaluate")
-def evaluate_alert(user_id: int, alert_no: int):
+def evaluate_alert(user_id: int, alert_no: int, current_user=Depends(require_matching_user)):
     result = check_all_active_alerts(user_id=user_id, alert_no=alert_no)
     for notification in result["notifications"]:
         if notification["user_id"] == user_id and notification["alert_no"] == alert_no:
@@ -419,7 +515,7 @@ def evaluate_alert(user_id: int, alert_no: int):
 
 
 @app.get("/users/{user_id}/notifications")
-def get_user_notifications(user_id: int):
+def get_user_notifications(user_id: int, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -447,7 +543,7 @@ def get_user_notifications(user_id: int):
 
 
 @app.patch("/users/{user_id}/notifications/{notification_id}/read")
-def mark_notification_read(user_id: int, notification_id: int):
+def mark_notification_read(user_id: int, notification_id: int, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -466,7 +562,7 @@ def mark_notification_read(user_id: int, notification_id: int):
 
 
 @app.get("/users/{user_id}/preferences")
-def get_preferences(user_id: int):
+def get_preferences(user_id: int, current_user=Depends(require_matching_user)):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -480,7 +576,7 @@ def get_preferences(user_id: int):
 
 
 @app.put("/users/{user_id}/preferences")
-def update_preferences(user_id: int, preference: UserPreferenceUpdate):
+def update_preferences(user_id: int, preference: UserPreferenceUpdate, current_user=Depends(require_matching_user)):
     if preference.notification_mode not in {"in_app", "email"}:
         return api_error("notification_mode must be 'in_app' or 'email'", 422)
     with get_connection() as connection:
@@ -504,14 +600,14 @@ def update_preferences(user_id: int, preference: UserPreferenceUpdate):
 
 
 @app.post("/alerts/check")
-def check_alerts():
+def check_alerts(current_user=Depends(get_current_user)):
     """Evaluate all active user-defined price alerts against the latest stored
     price for each security. Independent of statistical anomaly detection."""
-    return check_all_active_alerts()
+    return check_all_active_alerts(user_id=current_user["user_id"])
 
 
 @app.post("/analysis/run/{symbol}")
-def run_analysis_for_symbol(symbol: str):
+def run_analysis_for_symbol(symbol: str, current_user=Depends(get_current_user)):
     """Run the historical daily rolling-baseline analysis for one symbol.
 
     Reads already-ingested daily PRICE_BAR rows, computes rolling
@@ -527,7 +623,7 @@ def run_analysis_for_symbol(symbol: str):
 
 
 @app.post("/analysis/run")
-def run_analysis_all():
+def run_analysis_all(current_user=Depends(get_current_user)):
     """Run the historical daily rolling-baseline analysis for every configured
     symbol (config.SYMBOLS)."""
     results = {}
@@ -541,7 +637,7 @@ def run_analysis_all():
 
 
 @app.post("/pipeline/process/{symbol}")
-def process_symbol_pipeline(symbol: str, timeframe: str = "minute"):
+def process_symbol_pipeline(symbol: str, timeframe: str = "minute", current_user=Depends(get_current_user)):
     """Manually re-run the real-time pipeline (recent anomaly detection +
     anomaly notification + price-alert evaluation) against the most recently
     stored bar for a symbol.

@@ -1,20 +1,29 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { api } from '../api/client'
 
 export default function Login() {
   const navigate = useNavigate()
-  const [userId, setUserId] = useState('')
+  const [mode, setMode] = useState('login')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    const id = parseInt(userId, 10)
-    if (isNaN(id) || id < 1) {
-      setError('Please enter a valid User ID (number >= 1)')
-      return
+    setError('')
+    setBusy(true)
+    try {
+      if (mode === 'register') await api.registerAccount(name, email, password)
+      else await api.login(email, password)
+      navigate('/', { replace: true })
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
     }
-    localStorage.setItem('userId', id)
-    navigate('/')
   }
 
   return (
@@ -77,31 +86,40 @@ export default function Login() {
                 </svg>
               </div>
             </div>
-            <h1>Welcome Back</h1>
-            <p className="login-subtitle">Enter your User ID to access the dashboard</p>
+            <h1>{mode === 'login' ? 'Welcome Back' : 'Create your account'}</h1>
+            <p className="login-subtitle">Your watchlists, alerts, and notifications are private to your account.</p>
             
             <form onSubmit={handleSubmit} className="login-form">
+              {mode === 'register' && <div className="form-group">
+                <label htmlFor="name">Name</label>
+                <input id="name" type="text" required maxLength="200" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>}
               <div className="form-group">
-                <label htmlFor="userId">User ID</label>
+                <label htmlFor="email">Email</label>
                 <input
-                  id="userId"
-                  type="number"
-                  min="1"
-                  placeholder="Enter your User ID"
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  autoFocus
+                  id="email"
+                  type="email"
+                  required
+                  maxLength="255"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
+              <div className="form-group">
+                <label htmlFor="password">Password</label>
+                <input id="password" type="password" required minLength={mode === 'register' ? 12 : 1} maxLength="128" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password} onChange={(e) => setPassword(e.target.value)} />
+                {mode === 'register' && <span className="muted">Use at least 12 characters.</span>}
+              </div>
               
-              {error && <p className="login-error">{error}</p>}
+              {error && <p className="login-error" role="alert">{error}</p>}
               
-              <button type="submit" className="btn-primary">Sign In</button>
+              <button type="submit" className="btn-primary" disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}</button>
             </form>
             
-            <div className="login-demo">
-              <p className="muted">Demo users: 1, 2, 3, 4</p>
-            </div>
+            <button type="button" className="login-mode-toggle" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>
+              {mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}
+            </button>
           </div>
         </div>
       </div>
