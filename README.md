@@ -485,6 +485,16 @@ session tokens, and password hashes are not exposed by the builder.
 For HTTPS deployments, set `AUTH_COOKIE_SECURE=true` and configure
 `DASHBOARD_ORIGINS` to the exact frontend origin(s).
 
+For temporary collaborator development, the API can remain on the owner's
+computer while a Cloudflare Quick Tunnel exposes port 8000. On the owner's
+computer, run `cloudflared tunnel --url http://127.0.0.1:8000` and share the
+temporary URL with the collaborator. In their `dashboard/.env.local`, set
+`API_PROXY_TARGET` to that URL and leave `VITE_API_BASE_URL` blank, then
+restart Vite. The Vite proxy keeps browser requests same-origin so the current
+session cookie policy continues to work. Quick Tunnels are temporary; anyone
+with the URL can reach the API, so use this only for trusted development and
+stop the tunnel when finished.
+
 ## 18. Running Tests
 
 ```powershell

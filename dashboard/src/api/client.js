@@ -1,4 +1,7 @@
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+// In local development, use Vite's same-origin proxy (also works with an API
+// tunnel and keeps SameSite=Lax cookies first-party). Set VITE_API_BASE_URL
+// for a deployed frontend that talks to a separately hosted API.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? '' : 'http://127.0.0.1:8000')
 
 async function request(path, options = {}) {
   const response = await fetch(`${BASE_URL}${path}`, {
