@@ -385,8 +385,8 @@ FastAPI backend over `fetch` (see `dashboard/src/api/client.js`).
 ## 11. Installation
 
 ```powershell
-git clone <this-repository>
-cd stock-anomaly-detection
+git clone https://github.com/harishramaswamy28-oss/StockAnamolyDetection.git
+cd StockAnamolyDetection
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
