@@ -6,6 +6,39 @@ normal statistical behaviour, evaluates new intraday observations against
 that baseline to detect anomalies, evaluates independent user-defined price
 alerts, and surfaces everything through a REST API and a React dashboard.
 
+## Course Submission Information
+
+- **Course:** BACSE202 – Database Management Systems
+- **Semester:** Fall 2026–2027
+- **Faculty:** Dr. S. Geetha
+- **Team:** HARISH R – 25BCE1060; SUBRAHMANIAN RAMAKRISHNAN – 25BCE1094; PRITHYU RAM B – 25BCE1126
+- **Demonstration:** https://youtu.be/4V1y-uxerMg
+
+### Abstract
+
+Stock prices move constantly, and fixed alert thresholds cannot tell whether a move is unusual for one particular stock. This project presents a Stock Anomaly Detection and Real-Time Monitoring System that ingests daily and minute OHLCV bars from Alpaca Markets, learns each security's normal behaviour from rolling return and volume distributions, and flags deviations using adaptive Tukey (IQR) fences. Detected anomalies are stored with full traceability to the analysis run and price bar that produced them, and users receive deduplicated notifications for anomalies on their watchlists and for their own price alerts. The system uses PostgreSQL with the TimescaleDB extension, a Python FastAPI backend connected through psycopg3, and a React dashboard. A normalised 15-table schema with composite keys, weak entities, CHECK constraints and partial unique indexes enforces integrity, and a pytest suite validates detection, alerting and API logic.
+
+## Repository Layout
+
+```text
+README.md
+api/, alerts/, analysis/, database/, ingestion/, realtime/
+dashboard/                 React + Vite application
+sql/                       Canonical migrations and database setup scripts
+database/schema.sql        Submission copy of the initial schema
+database/sample_data.sql   Optional demo account and watchlist seed
+database/queries.sql       Read-only examples for database inspection
+screenshots/               Application and pgAdmin evidence pairs
+report/                    Project report
+presentation/              Project presentation
+tests/                      Automated test suite
+requirements.txt            Backend dependencies
+requirements-dev.txt        Development and test dependencies
+.env.example                Configuration template; no real credentials
+```
+
+The application packages remain at the project root so existing Python imports and startup commands continue to work. The schema and demo-data copies under `database/` are provided for the assignment layout; `sql/` remains the canonical setup and migration directory.
+
 ## 1. Project Objective
 
 1. Collect and store historical stock market data (daily + minute OHLCV).
@@ -102,8 +135,9 @@ exactly once, never duplicated inside a route handler.
 
 - **Backend:** Python, FastAPI, psycopg3, Pandas, NumPy, scikit-learn (where
   applicable), alpaca-py
-- **Database:** PostgreSQL + TimescaleDB (`price_bar` is a hypertable)
+- **Database:** PostgreSQL 16.15 + TimescaleDB 2.30.0 (`price_bar` is a hypertable)
 - **Frontend:** React + Vite, Chart.js (via `react-chartjs-2`)
+- **Tested environment:** Python 3.11.9 and Node.js 24.16.0
 - **Data source:** Alpaca Markets, IEX feed (works with the free/basic
   market-data subscription; not a consolidated all-exchange feed — see
   Known Limitations)
@@ -506,6 +540,11 @@ pytest                              # everything; integration tests will
 ```
 
 See [`TEST_GUIDE.md`](TEST_GUIDE.md) for a description of every test file.
+
+
+### Recorded test result
+
+The latest recorded local run used `python -m pytest -m "not integration" -v` and reported **70 passed, 17 failed, 9 deselected, and 2 warnings**. The failures were in `tests/test_api.py`, where authentication and response-field expectations need to be aligned. This is a known limitation; the result is reported here rather than presenting the suite as fully passing.
 
 ## 19. Known Limitations
 
